@@ -38,8 +38,8 @@ app.UseAuthorization();  // 2. Evaluate route policies
 // 3. BFF Auth Handlers (Mapped Minimal APIs)
 app.MapGet(builder.Configuration["AppOptions:BffLoginPath"]!, (string? returnUrl, HttpContext context) =>
 {
-    var redirectUri = string.IsNullOrEmpty(returnUrl) || !RedirectHttpResult.IsLocalUrl(returnUrl) 
-        ? "/" 
+    var redirectUri = string.IsNullOrEmpty(returnUrl) || !RedirectHttpResult.IsLocalUrl(returnUrl)
+        ? "/"
         : returnUrl;
 
     return Results.Challenge(
@@ -74,5 +74,7 @@ app.MapGet(builder.Configuration["AppOptions:BffUserInfoPath"]!, (ClaimsPrincipa
 app.MapReverseProxy(); // Proxies matched routes to target clusters
 
 app.MapFallbackToFile("index.html");
+
+app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();

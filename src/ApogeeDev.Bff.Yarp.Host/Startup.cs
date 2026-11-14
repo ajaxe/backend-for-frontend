@@ -18,7 +18,8 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             .ReadFrom.Configuration(configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext());
-
+        
+        services.AddHealthChecks();
         services.AddOptions<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme)
             .Configure<IDistributedCache, ILogger<AppTicketStore>>((options, cache, logger) =>
             {
