@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Caching.Distributed;
 
+namespace ApogeeDev.Bff.Yarp.Host.Services;
+
 public class AppTicketStore(IDistributedCache cache,
         IDataSerializer<AuthenticationTicket> serializer,
         ILogger<AppTicketStore> logger) : ITicketStore

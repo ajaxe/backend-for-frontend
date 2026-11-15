@@ -1,4 +1,7 @@
 using System.Security.Claims;
+using ApogeeDev.Bff.Yarp.Host.Auth;
+using ApogeeDev.Bff.Yarp.Host.Config;
+using ApogeeDev.Bff.Yarp.Host.Services;
 using ApogeeDev.Bff.Yarp.Host.Transforms;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -20,6 +23,18 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             .Enrich.FromLogContext());
         
         services.AddHealthChecks();
+
+        services.AddOptions<OidcOptions>()
+            .BindConfiguration(OidcOptions.SectionName)
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.Authority) && !string.IsNullOrWhiteSpace(o.ClientId),
+                "Missing required Oidc Authority or ClientId configuration.")
+            .ValidateOnStart();
+
+        var oidcOptions = configuration.GetSection(OidcOptions.SectionName).Get<OidcOptions>()
+            ?? throw new InvalidOperationException("missing oidc configuration");
+
+        services.AddSingleton<BffCookieAuthenticationEvents>();
         services.AddOptions<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme)
             .Configure<IDistributedCache, ILogger<AppTicketStore>>((options, cache, logger) =>
             {
@@ -42,12 +57,13 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             options.Cookie.Path = "/";
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
+            options.EventsType = typeof(BffCookieAuthenticationEvents);
         })
         .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
         {
-            options.Authority = configuration["Oidc:Authority"];
-            options.ClientId = configuration["Oidc:ClientId"];
-            options.ClientSecret = configuration["Oidc:ClientSecret"]; // Confidential client
+            options.Authority = oidcOptions.Authority;
+            options.ClientId = oidcOptions.ClientId;
+            options.ClientSecret = oidcOptions.ClientSecret; // Confidential client
             options.ResponseType = OpenIdConnectResponseType.Code;
             options.ResponseMode = OpenIdConnectResponseMode.Query;
             options.UsePkce = true;
