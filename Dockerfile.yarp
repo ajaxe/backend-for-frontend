@@ -15,7 +15,10 @@ RUN dotnet publish -c Release -r linux-musl-x64 -o published --no-self-contained
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 
-RUN apk add bash icu-libs krb5-libs libgcc libintl libssl3 libstdc++ zlib curl
+RUN apk add bash icu-libs krb5-libs libgcc libintl libssl3 libstdc++ zlib curl \
+    && mkdir -p /certs \
+    && chown app:app /certs \
+    && chmod 750 /certs
 
 USER app
 WORKDIR /home/app/
@@ -26,6 +29,8 @@ ENV ASPNETCORE_URLS=http://*:5000 \
     ASPNETCORE_ENVIRONMENT=Production
 
 VOLUME /home/app/wwwroot
+# For SSL certificates if needed
+VOLUME /certs
 
 EXPOSE 5000
 

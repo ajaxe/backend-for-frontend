@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Serilog;
 using Serilog.Formatting.Compact;
+using Microsoft.AspNetCore.Antiforgery;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console(new CompactJsonFormatter())
@@ -48,27 +49,53 @@ app.MapGet(builder.Configuration["AppOptions:BffLoginPath"]!, (string? returnUrl
     );
 });
 
-app.MapGet(builder.Configuration["AppOptions:BffLogoutPath"]!, (HttpContext context) =>
+if (builder.Environment.IsDevelopment())
 {
-    return Results.SignOut(
-        new AuthenticationProperties { RedirectUri = "/" },
-        [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]
-    );
-});
-
-app.MapGet(builder.Configuration["AppOptions:BffUserInfoPath"]!, (ClaimsPrincipal user) =>
-{
-    if (user.Identity?.IsAuthenticated != true)
+    app.MapGet(builder.Configuration["AppOptions:BffLogoutPath"]!, (HttpContext context) =>
     {
-        return Results.Json(new { isAuthenticated = false });
-    }
-
-    return Results.Json(new
-    {
-        isAuthenticated = true,
-        claims = user.Claims.Select(c => new { c.Type, c.Value })
+        return Results.SignOut(
+            new AuthenticationProperties { RedirectUri = "/" },
+            [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]
+        );
     });
-}).RequireAuthorization();
+}
+app.MapPost(builder.Configuration["AppOptions:BffLogoutPath"]!, async (
+    HttpContext context,
+    IAntiforgery antiforgery) =>
+    {
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.BadRequest(new { error = "Invalid or missing CSRF token." });
+        }
+        return Results.SignOut(
+            new AuthenticationProperties { RedirectUri = "/" },
+            [CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme]
+        );
+    }).RequireAuthorization();
+
+
+app.MapGet(builder.Configuration["AppOptions:BffUserInfoPath"]!, (
+    ClaimsPrincipal user,
+    HttpContext context,
+    IAntiforgery antiforgery) =>
+    {
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            return Results.Json(new { isAuthenticated = false });
+        }
+        var tokens = antiforgery.GetAndStoreTokens(context);
+        return Results.Json(new
+        {
+            isAuthenticated = true,
+            csrfToken = tokens.RequestToken,
+            csrfFormFieldName = tokens.FormFieldName, // "__RequestVerificationToken"
+            claims = user.Claims.Select(c => new { c.Type, c.Value })
+        });
+    }).RequireAuthorization();
 
 // 4. Map YARP Endpoints
 app.MapReverseProxy(); // Proxies matched routes to target clusters

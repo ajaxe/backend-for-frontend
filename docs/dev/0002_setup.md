@@ -22,6 +22,7 @@
     - `ASPNETCORE_URLS=http://*:5000`
     - `ASPNETCORE_ENVIRONMENT=Production`
   - **Static Assets Volume:** `VOLUME /home/app/wwwroot`
+  - **Certificates Volume:** `VOLUME /certs` (pre-created with `app:app` ownership and `750` permissions for optional TLS certificates)
   - **Exposed Port:** `5000` (HTTP)
   - **Health Check:** Probes `http://localhost:5000/health` every `30s` via `curl`.
 
@@ -227,7 +228,131 @@ services:
 
 ---
 
-## 6. Production Deployment Checklist & Gotchas
+## 6. Local Development SSL Setup (Self-Signed Certificates)
+
+Because the BFF issues hardened `__Host-bff-session` and `__Host-XSRF-TOKEN` cookies with `SecurePolicy = CookieSecurePolicy.Always`, you may want Kestrel inside the container to serve HTTPS directly during local development (rather than placing a separate TLS-terminating proxy in front of it).
+
+`Dockerfile.yarp` pre-creates `/certs` (`VOLUME /certs`, owned by `app:app`, mode `750`), and ASP.NET Core binds Kestrel TLS settings directly from environment variables—no code changes or image rebuilds are required.
+
+### 6.1 Generate a Local Self-Signed Certificate
+
+Choose either **PFX** or **PEM** format:
+
+- **Option A: PFX via `.NET CLI`**
+  ```powershell
+  mkdir -p ./certs
+  dotnet dev-certs https -ep ./certs/bff.pfx -p devpass
+  dotnet dev-certs https --trust   # Trusts the cert in your host OS / browser
+  ```
+
+- **Option B: PEM via `mkcert` (recommended for browser-trusted local certs)**
+  ```bash
+  mkdir -p ./certs
+  mkcert -install
+  mkcert -cert-file ./certs/cert.pem -key-file ./certs/key.pem localhost 127.0.0.1 ::1
+  ```
+
+### 6.2 Ensure `/certs` Is Readable by `USER app`
+
+When mounting a host folder (`-v ./certs:/certs:ro`), host ownership and mode bits override the container directory's permissions:
+
+- **Windows / macOS (Docker Desktop):** Bind-mounted files are automatically readable by `app`—no extra steps needed.
+- **Linux / WSL2 filesystem:** The `app` user in `mcr.microsoft.com/dotnet/aspnet:10.0-alpine` uses UID/GID **`1654`** (`$APP_UID`). Because certificate tools often create private keys with `0600` owned by your host user, grant read access to `1654`:
+  ```bash
+  # Recommended: match the container's app UID/GID
+  sudo chown -R 1654:1654 ./certs
+  chmod 750 ./certs && chmod 600 ./certs/*
+  ```
+  *(For quick local-only testing on Linux, `chmod 755 ./certs && chmod 644 ./certs/*` also works.)*
+- **Kubernetes:** Mount your TLS Secret at `/certs` and set `securityContext.fsGroup: 1654` on the Pod (with `defaultMode: 0440` on the Secret volume).
+
+### 6.3 Run the Container with HTTPS Enabled
+
+Keep `http://+:5000` alongside `https://+:5001` in `ASPNETCORE_URLS` so the built-in `HEALTHCHECK` (`http://localhost:5000/health`) continues to pass.
+
+#### `docker run` (PFX example)
+
+```bash
+docker run -d \
+  --name bff-yarp-proxy \
+  -p 5000:5000 \
+  -p 5001:5001 \
+  -v "$(pwd)/spa-dist:/home/app/wwwroot:ro" \
+  -v "$(pwd)/appsettings.Development.json:/home/app/appsettings.Development.json:ro" \
+  -v "$(pwd)/certs:/certs:ro" \
+  -e ASPNETCORE_ENVIRONMENT=Development \
+  -e ASPNETCORE_URLS="http://+:5000;https://+:5001" \
+  -e ASPNETCORE_Kestrel__Certificates__Default__Path="/certs/bff.pfx" \
+  -e ASPNETCORE_Kestrel__Certificates__Default__Password="devpass" \
+  -e BFF_ConnectionStrings__Redis="redis://redis:6379" \
+  -e BFF_Oidc__Authority="https://idp.local:8443" \
+  -e BFF_Oidc__ClientId="bff-yarp-host" \
+  -e BFF_Oidc__ClientSecret="bff-yarp-host-secret" \
+  apogeedev/bff-yarp-host:latest
+```
+
+#### `docker-compose.dev.yml` (PEM or PFX)
+
+```yaml
+services:
+  bff-proxy:
+    image: apogeedev/bff-yarp-host:latest
+    container_name: bff-yarp-proxy-dev
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    volumes:
+      - ./spa-dist:/home/app/wwwroot:ro
+      - ./appsettings.Development.json:/home/app/appsettings.Development.json:ro
+      - ./certs:/certs:ro
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: "http://+:5000;https://+:5001"
+      # Option A: PFX
+      ASPNETCORE_Kestrel__Certificates__Default__Path: /certs/bff.pfx
+      ASPNETCORE_Kestrel__Certificates__Default__Password: devpass
+      # Option B: PEM (use instead of PFX variables above)
+      # ASPNETCORE_Kestrel__Certificates__Default__Path: /certs/cert.pem
+      # ASPNETCORE_Kestrel__Certificates__Default__KeyPath: /certs/key.pem
+      BFF_ConnectionStrings__Redis: "redis://redis:6379"
+      BFF_Oidc__Authority: "https://idp.local:8443"
+      BFF_Oidc__ClientId: "bff-yarp-host"
+      BFF_Oidc__ClientSecret: "${OIDC_CLIENT_SECRET}"
+```
+
+> [!TIP]
+> `BFF_Kestrel__Certificates__Default__Path` (and `Password` / `KeyPath`) also work if you prefer all BFF overrides to share the `BFF_` prefix.
+
+### 6.4 Outbound HTTPS: Trusting Self-Signed Certs for Local IdP & Upstream APIs
+
+If your local OIDC Identity Provider (`BFF_Oidc__Authority`) or upstream YARP backend APIs also use self-signed certificates:
+
+1. **Recommended (full TLS verification via custom CA):**
+   Because `Dockerfile.yarp` installs `libssl3` on Alpine, .NET's `HttpClient` honors OpenSSL's `SSL_CERT_FILE` environment variable for both OIDC backchannel requests and YARP proxy traffic. Place your local root CA (e.g., from `mkcert -CAROOT`) in `./certs/rootCA.pem` and add:
+   ```yaml
+   environment:
+     SSL_CERT_FILE: /certs/rootCA.pem
+   ```
+2. **YARP dev-only fallback (upstream clusters only):**
+   To bypass certificate validation for a specific local upstream cluster in `appsettings.Development.json` (never use in production):
+   ```json
+   "Clusters": {
+     "cluster1": {
+       "HttpClient": {
+         "DangerousAcceptAnyServerCertificate": true
+       },
+       "Destinations": {
+         "destination1": {
+           "Address": "https://host.docker.internal:7007"
+         }
+       }
+     }
+   }
+   ```
+
+---
+
+## 7. Production Deployment Checklist & Gotchas
 
 1. **TLS Termination & `__Host-` Cookie Requirement:**
    - The BFF issues `__Host-bff-session` and `__Host-XSRF-TOKEN` cookies with `SecurePolicy = CookieSecurePolicy.Always` and `Path = "/"`.
