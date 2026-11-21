@@ -1,0 +1,45 @@
+# Build artifacts
+**/bin/
+**/obj/
+
+# IDE files
+.vs/
+.vscode/
+*.suo
+*.user
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs/
+
+# NuGet
+nuget.config
+*.nupkg
+packages/
+
+# Secrets and local config (never commit or build with)
+**/secrets.json
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/.env
+**/*.env
+
+# Git
+.git
+.gitignore
+
+# Docker files (avoid context bloat if building from root)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Go related (if present in workspace but not used for .NET build)
+src/go-bff/
+
+# Test projects (optional: include if you want to run tests in a separate stage)
+*.Test.csproj
+*.Tests.csproj

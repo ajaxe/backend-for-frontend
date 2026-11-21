@@ -210,6 +210,13 @@ Or launch both services together in VS Code using the **`Test-Stack (BFF + Upstr
 ### Docker & Production Setup
 For building and running the containerized BFF proxy using [`Dockerfile.yarp`](./Dockerfile.yarp)—including mounting your compiled SPA bundle to `/home/app/wwwroot`, overriding YARP upstream routes via `appsettings.Production.json`, and injecting secrets with `BFF_` environment variables—see the **[Docker Setup & Production Deployment Guide (`docs/dev/0002_setup.md`)](./docs/dev/0002_setup.md)**.
 
+Docker image command
+
+```shell
+# set docker context as needed
+docker build . --load -f Dockerfile.yarp -t apogee-dev/bff-yarp-proxy:local
+```
+
 ### Testing & Verification
 1. Start Redis, your OIDC Identity Provider, `ApogeeDev.Sample.Backend.Host`, and `ApogeeDev.Bff.Yarp.Host`.
 2. Navigate to `https://localhost:7033/bff/login` to authenticate via the Identity Provider.

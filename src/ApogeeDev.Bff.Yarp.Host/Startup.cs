@@ -68,6 +68,10 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             options.ResponseMode = OpenIdConnectResponseMode.Query;
             options.UsePkce = true;
 
+            options.CallbackPath = oidcOptions.CallbackPath;
+            options.SignedOutCallbackPath = oidcOptions.SignedOutCallbackPath;
+            options.RemoteSignOutPath = oidcOptions.RemoteSignOutPath;
+
             options.SaveTokens = true; // Stores access_token, refresh_token, id_token in authentication session
             options.GetClaimsFromUserInfoEndpoint = true; // Set to true only if thin tokens are used
             options.MapInboundClaims = false;
