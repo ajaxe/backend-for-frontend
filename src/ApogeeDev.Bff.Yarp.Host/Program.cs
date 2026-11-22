@@ -25,6 +25,7 @@ startup.ConfigureServices(builder.Services);
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 
 app.UseDefaultFiles();

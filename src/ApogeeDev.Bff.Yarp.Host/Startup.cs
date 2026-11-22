@@ -6,9 +6,12 @@ using ApogeeDev.Bff.Yarp.Host.Transforms;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Serilog;
+using StackExchange.Redis;
 
 namespace ApogeeDev.Bff.Yarp.Host;
 
@@ -21,8 +24,18 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             .ReadFrom.Configuration(configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext());
-        
+
         services.AddHealthChecks();
+
+        services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders =
+                ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            options.ForwardLimit = null; // Forward all headers, even if multiple proxies are used
+            options.RequireHeaderSymmetry = false;
+            options.KnownIPNetworks.Clear();
+            options.KnownProxies.Clear();
+        });
 
         services.AddOptions<OidcOptions>()
             .BindConfiguration(OidcOptions.SectionName)
@@ -110,15 +123,34 @@ public class Startup(ConfigurationManager configuration, IWebHostEnvironment env
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         });
 
+        var appName = configuration["AppOptions:AppName"];
+        if (string.IsNullOrWhiteSpace(appName))
+            throw new InvalidOperationException("missing AppOptions:AppName configuration");
+
+        var redisKeyPrefix = $"{appName}:{environment.EnvironmentName}:";
+
+        var rawRedisConfig = configuration.GetConnectionString("Redis");
+        if (string.IsNullOrWhiteSpace(rawRedisConfig))
+            throw new InvalidOperationException("missing redis configuration");
+
+        var redisConfiguration = Uri.TryCreate(rawRedisConfig, UriKind.Absolute, out var uri) && uri.Scheme is "redis" or "rediss"
+            ? $"{uri.Host}:{(uri.Port > 0 ? uri.Port : 6379)},ssl={uri.Scheme == "rediss"}"
+            : rawRedisConfig;
+
+        var redisOptions = ConfigurationOptions.Parse(redisConfiguration);
+        redisOptions.AbortOnConnectFail = false;
+
+        IConnectionMultiplexer redis = ConnectionMultiplexer.Connect(redisOptions);
+        services.AddSingleton(redis);
+
         services.AddStackExchangeRedisCache(o =>
         {
-            o.InstanceName = $"{configuration["AppOptions:AppName"]}:{environment.EnvironmentName}:";
-            var redisConfig = configuration.GetConnectionString("Redis")
-                   ?? throw new InvalidOperationException("missing redis configuration");
-
-            o.Configuration = Uri.TryCreate(redisConfig, UriKind.Absolute, out var uri) && uri.Scheme is "redis" or "rediss"
-                ? $"{uri.Host}:{(uri.Port > 0 ? uri.Port : 6379)},ssl={uri.Scheme == "rediss"}"
-                : redisConfig;
+            o.InstanceName = redisKeyPrefix;
+            o.ConnectionMultiplexerFactory = () => Task.FromResult(redis);
         });
+
+        services.AddDataProtection()
+            .SetApplicationName(appName)
+            .PersistKeysToStackExchangeRedis(redis, $"{redisKeyPrefix}DataProtection-Keys");
     }
 }
