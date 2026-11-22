@@ -28,7 +28,7 @@ COPY --from=builder --chown=app:app /home/app/published .
 ENV ASPNETCORE_URLS=http://*:5000 \
     ASPNETCORE_ENVIRONMENT=Production
 
-VOLUME /home/app/wwwroot
+RUN mkdir -p /home/app/wwwroot && chown app:app /home/app/wwwroot
 # For SSL certificates if needed
 VOLUME /certs
 
